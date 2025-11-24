@@ -283,6 +283,7 @@ PGPASSWORD=admin psql -U postgres -d medicamentos_gov -f sql/consultas.sql > res
 **Objetivo**: Identificar substâncias com variações extremas de preço entre laboratórios (possível abuso de preço ou necessidade de regulação).
 
 **Lógica de Negócio**:
+- Usa apenas preços mais recentes por produto (evita duplicatas de histórico)
 - Agrupa por **substância ativa** (não por laboratório) para análise de mercado
 - Considera apenas substâncias comercializadas por **múltiplos laboratórios** (>1)
 - Calcula variação percentual entre menor e maior preço no mercado
@@ -297,6 +298,7 @@ PGPASSWORD=admin psql -U postgres -d medicamentos_gov -f sql/consultas.sql > res
 **Objetivo**: Identificar melhor opção de custo-benefício para compras governamentais, evitando duplicatas de apresentações.
 
 **Lógica de Negócio**:
+- Usa apenas preços mais recentes por produto (evita duplicatas de histórico)
 - Agrupa por **produto** (não por apresentação) para evitar duplicatas
 - Para produtos com CAP: usa PMVG como preço de referência (mais barato)
 - Para produtos sem CAP: usa PF como preço de referência
@@ -311,14 +313,16 @@ PGPASSWORD=admin psql -U postgres -d medicamentos_gov -f sql/consultas.sql > res
 **Objetivo**: Monitorar eficácia do programa CAP e contribuição de cada laboratório para economia pública.
 
 **Lógica de Negócio**:
+- Usa apenas preços mais recentes por produto (evita duplicatas de histórico)
 - Considera apenas produtos com CAP ativo e comercialização em 2024
 - Calcula diferença entre PF e PMVG (economia do governo)
+- Mostra desconto médio por produto (não ponderado) e faixa de desconto (min/max)
 - Agrupa por laboratório para identificar maiores contribuidores
 - Ordena por maior economia total (maior impacto financeiro primeiro)
 
-**Saída**: Laboratório, total de produtos CAP, valores totais (PF/PMVG), economia total e desconto percentual.
+**Saída**: Laboratório, total de produtos CAP, valores totais (PF/PMVG), economia total, desconto médio por produto, desconto mínimo e máximo.
 
-**Uso**: Avaliar eficácia do programa CAP e identificar laboratórios que mais contribuem para economia pública.
+**Uso**: Avaliar eficácia do programa CAP e identificar laboratórios que mais contribuem para economia pública. A faixa de desconto (min/max) ajuda a identificar variações no programa CAP.
 
 ### Consulta 4: Inconsistências Agrupadas por Tipo de Problema
 **Objetivo**: Identificar problemas de qualidade de dados agrupados por tipo para correção prioritária.
@@ -339,6 +343,7 @@ PGPASSWORD=admin psql -U postgres -d medicamentos_gov -f sql/consultas.sql > res
 **Objetivo**: Identificar outliers de preço por tipo de produto para análise de regulação.
 
 **Lógica de Negócio**:
+- Usa apenas preços mais recentes por produto (evita duplicatas de histórico)
 - Agrupa por **produto** (não por apresentação) para evitar múltiplas entradas
 - Calcula estatísticas (média, mediana, mínimo, máximo) por tipo de produto
 - Compara cada produto com estatísticas do seu tipo
