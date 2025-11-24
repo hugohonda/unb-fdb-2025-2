@@ -31,7 +31,28 @@ BEGIN
         RETURN;
     END IF;
     
-    IF p_tipo_preco = 'PMVG' THEN
+    -- Busca valor anterior antes de atualizar
+    IF p_tipo_preco = 'PF' THEN
+        SELECT pf_sem_impostos INTO v_valor_anterior
+        FROM precos_fabrica
+        WHERE id_produto = v_id_produto AND ((p_id_aliquota IS NULL AND id_aliquota IS NULL) OR id_aliquota = p_id_aliquota)
+        ORDER BY data_vigencia DESC
+        LIMIT 1;
+        
+        IF v_valor_anterior IS NOT NULL THEN
+            v_percentual_variacao := ABS((p_novo_valor - v_valor_anterior) / v_valor_anterior * 100);
+            IF v_percentual_variacao > 50 THEN
+                p_resultado := 'AVISO: Variação de ' || ROUND(v_percentual_variacao, 2) || '% detectada. Prosseguindo com atualização.';
+            END IF;
+        END IF;
+        
+        INSERT INTO precos_fabrica (id_produto, id_aliquota, pf_sem_impostos, data_vigencia)
+        VALUES (v_id_produto, p_id_aliquota, p_novo_valor, CURRENT_DATE)
+        ON CONFLICT (id_produto, id_aliquota, data_vigencia)
+        DO UPDATE SET pf_sem_impostos = EXCLUDED.pf_sem_impostos;
+        
+    ELSIF p_tipo_preco = 'PMVG' THEN
+        -- Valida PMVG vs PF para produtos sem CAP
         IF v_cap = 'Não' THEN
             SELECT pf_sem_impostos INTO v_valor_anterior
             FROM precos_fabrica
@@ -44,46 +65,17 @@ BEGIN
             END IF;
         END IF;
         
-        INSERT INTO precos_pmvg (id_produto, id_aliquota, pmvg_sem_impostos, data_vigencia)
-        VALUES (v_id_produto, p_id_aliquota, p_novo_valor, CURRENT_DATE)
-        ON CONFLICT (id_produto, id_aliquota, data_vigencia)
-        DO UPDATE SET 
-            pmvg_sem_impostos = EXCLUDED.pmvg_sem_impostos,
-            data_vigencia = EXCLUDED.data_vigencia;
-        
+        -- Busca valor anterior de PMVG
         SELECT pmvg_sem_impostos INTO v_valor_anterior
         FROM precos_pmvg
         WHERE id_produto = v_id_produto AND ((p_id_aliquota IS NULL AND id_aliquota IS NULL) OR id_aliquota = p_id_aliquota)
         ORDER BY data_vigencia DESC
         LIMIT 1;
         
-    ELSIF p_tipo_preco = 'PF' THEN
-        SELECT pf_sem_impostos INTO v_valor_anterior
-        FROM precos_fabrica
-        WHERE id_produto = v_id_produto AND ((p_id_aliquota IS NULL AND id_aliquota IS NULL) OR id_aliquota = p_id_aliquota)
-        ORDER BY data_vigencia DESC
-        LIMIT 1;
-        
-        IF v_valor_anterior IS NOT NULL THEN
-            v_percentual_variacao := ABS((p_novo_valor - v_valor_anterior) / v_valor_anterior * 100);
-            
-            IF v_percentual_variacao > 50 THEN
-                p_resultado := 'AVISO: Variação de ' || ROUND(v_percentual_variacao, 2) || '% detectada. Prosseguindo com atualização.';
-            END IF;
-        END IF;
-        
-        INSERT INTO precos_fabrica (id_produto, id_aliquota, pf_sem_impostos, data_vigencia)
+        INSERT INTO precos_pmvg (id_produto, id_aliquota, pmvg_sem_impostos, data_vigencia)
         VALUES (v_id_produto, p_id_aliquota, p_novo_valor, CURRENT_DATE)
         ON CONFLICT (id_produto, id_aliquota, data_vigencia)
-        DO UPDATE SET 
-            pf_sem_impostos = EXCLUDED.pf_sem_impostos,
-            data_vigencia = EXCLUDED.data_vigencia;
-        
-        SELECT pf_sem_impostos INTO v_valor_anterior
-        FROM precos_fabrica
-        WHERE id_produto = v_id_produto AND ((p_id_aliquota IS NULL AND id_aliquota IS NULL) OR id_aliquota = p_id_aliquota)
-        ORDER BY data_vigencia DESC
-        LIMIT 1;
+        DO UPDATE SET pmvg_sem_impostos = EXCLUDED.pmvg_sem_impostos;
     ELSE
         p_resultado := 'ERRO: Tipo de preço inválido';
         RETURN;
@@ -122,7 +114,6 @@ RETURNS TABLE (
     regime_preco VARCHAR(50),
     cap tipo_sim_nao,
     comercializacao_2024 tipo_sim_nao,
-    aliquota DECIMAL(5,2),
     preco_fabrica DECIMAL(10,2),
     preco_pmvg DECIMAL(10,2),
     preco_referencia DECIMAL(10,2)
@@ -131,52 +122,57 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
     RETURN QUERY
-    SELECT DISTINCT
-        p.codigo_ggrem,
-        p.nome_produto,
-        p.apresentacao,
-        s.nome_substancia,
-        l.nome_laboratorio,
-        tp.tipo_produto,
-        rp.regime_preco,
-        p.cap,
-        p.comercializacao_2024,
-        a.aliquota,
-        pf.pf_sem_impostos AS preco_fabrica,
-        pmvg.pmvg_sem_impostos AS preco_pmvg,
-        CASE 
-            WHEN p.cap = 'Sim' AND pmvg.pmvg_sem_impostos IS NOT NULL THEN pmvg.pmvg_sem_impostos
-            ELSE pf.pf_sem_impostos
-        END AS preco_referencia
-    FROM produtos p
-    INNER JOIN substancias s ON p.id_substancia = s.id_substancia
-    INNER JOIN laboratorios l ON p.id_laboratorio = l.id_laboratorio
-    INNER JOIN tipos_produto tp ON p.id_tipo = tp.id_tipo
-    INNER JOIN regimes_preco rp ON p.id_regime = rp.id_regime
-    LEFT JOIN precos_fabrica pf ON p.id_produto = pf.id_produto AND pf.id_aliquota IS NULL
-    LEFT JOIN precos_pmvg pmvg ON p.id_produto = pmvg.id_produto AND pmvg.id_aliquota IS NULL
-    LEFT JOIN aliquotas_icms a ON pf.id_aliquota = a.id_aliquota
-    WHERE 
-        (p_substancia IS NULL OR s.nome_substancia ILIKE '%' || p_substancia || '%')
-        AND (p_laboratorio IS NULL OR l.nome_laboratorio ILIKE '%' || p_laboratorio || '%')
-        AND (p_tipo_produto IS NULL OR tp.tipo_produto = p_tipo_produto)
-        AND (p_com_cap IS NULL OR (p_com_cap = TRUE AND p.cap = 'Sim') OR (p_com_cap = FALSE AND p.cap = 'Não'))
-        AND (p_aliquota IS NULL OR a.aliquota = p_aliquota)
-        AND (p_preco_maximo IS NULL OR 
-             (CASE 
+    SELECT 
+        subq.codigo_ggrem,
+        subq.nome_produto,
+        subq.apresentacao,
+        subq.nome_substancia,
+        subq.nome_laboratorio,
+        subq.tipo_produto,
+        subq.regime_preco,
+        subq.cap,
+        subq.comercializacao_2024,
+        subq.preco_fabrica,
+        subq.preco_pmvg,
+        subq.preco_referencia
+    FROM (
+        SELECT DISTINCT
+            p.codigo_ggrem,
+            p.nome_produto,
+            p.apresentacao,
+            s.nome_substancia,
+            l.nome_laboratorio,
+            tp.tipo_produto,
+            rp.regime_preco,
+            p.cap,
+            p.comercializacao_2024,
+            pf.pf_sem_impostos AS preco_fabrica,
+            pmvg.pmvg_sem_impostos AS preco_pmvg,
+            CASE 
                 WHEN p.cap = 'Sim' AND pmvg.pmvg_sem_impostos IS NOT NULL THEN pmvg.pmvg_sem_impostos
                 ELSE pf.pf_sem_impostos
-             END) <= p_preco_maximo)
-    ORDER BY 
-        CASE 
-            WHEN p_ordenar_por = 'preco' THEN 
-                CASE 
+            END AS preco_referencia
+        FROM produtos p
+        INNER JOIN substancias s ON p.id_substancia = s.id_substancia
+        INNER JOIN laboratorios l ON p.id_laboratorio = l.id_laboratorio
+        INNER JOIN tipos_produto tp ON p.id_tipo = tp.id_tipo
+        INNER JOIN regimes_preco rp ON p.id_regime = rp.id_regime
+        LEFT JOIN precos_fabrica pf ON p.id_produto = pf.id_produto AND pf.id_aliquota IS NULL
+        LEFT JOIN precos_pmvg pmvg ON p.id_produto = pmvg.id_produto AND pmvg.id_aliquota IS NULL
+        WHERE 
+            (p_substancia IS NULL OR s.nome_substancia ILIKE '%' || p_substancia || '%')
+            AND (p_laboratorio IS NULL OR l.nome_laboratorio ILIKE '%' || p_laboratorio || '%')
+            AND (p_tipo_produto IS NULL OR tp.tipo_produto = p_tipo_produto)
+            AND (p_com_cap IS NULL OR (p_com_cap = TRUE AND p.cap = 'Sim') OR (p_com_cap = FALSE AND p.cap = 'Não'))
+            AND (p_preco_maximo IS NULL OR 
+                 (CASE 
                     WHEN p.cap = 'Sim' AND pmvg.pmvg_sem_impostos IS NOT NULL THEN pmvg.pmvg_sem_impostos
                     ELSE pf.pf_sem_impostos
-                END
-            ELSE 0
-        END,
-        CASE WHEN p_ordenar_por = 'laboratorio' THEN l.nome_laboratorio ELSE '' END,
-        CASE WHEN p_ordenar_por != 'preco' AND p_ordenar_por != 'laboratorio' THEN p.nome_produto ELSE '' END;
+                 END) <= p_preco_maximo)
+    ) subq
+    ORDER BY 
+        CASE WHEN p_ordenar_por = 'preco' THEN subq.preco_referencia ELSE NULL END,
+        CASE WHEN p_ordenar_por = 'laboratorio' THEN subq.nome_laboratorio ELSE NULL END,
+        CASE WHEN p_ordenar_por != 'preco' AND p_ordenar_por != 'laboratorio' THEN subq.nome_produto ELSE NULL END;
 END;
 $$;
