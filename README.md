@@ -276,6 +276,67 @@ PGPASSWORD=admin psql -U postgres -d medicamentos_gov -f sql/consultas.sql
 PGPASSWORD=admin psql -U postgres -d medicamentos_gov -f sql/consultas.sql > resultados.txt
 ```
 
+## Consultas Complexas (sql/consultas.sql)
+
+O arquivo contém 5 consultas SQL que analisam diferentes aspectos dos dados de medicamentos:
+
+### Consulta 1: Análise Comparativa de Preços
+**Objetivo**: Identificar variações de preços entre laboratórios para a mesma substância ativa.
+
+**Lógica de Negócio**:
+- Agrupa por substância, laboratório e tipo de produto
+- Calcula estatísticas: média, mínimo, máximo e variação percentual
+- Ordena por maior variação primeiro para destacar discrepâncias de mercado
+- Útil para detectar possíveis abusos de preço ou oportunidades de economia
+
+**Saída**: Substância, laboratório, tipo, quantidade de apresentações, preços (médio/min/max) e variação percentual.
+
+### Consulta 2: Top Produtos por Classe Terapêutica
+**Objetivo**: Identificar os produtos mais baratos em cada classe terapêutica para otimizar compras governamentais.
+
+**Lógica de Negócio**:
+- Para produtos com CAP: usa PMVG como preço de referência (mais barato)
+- Para produtos sem CAP: usa PF como preço de referência
+- Classifica por ranking dentro de cada classe (1 = mais barato)
+- Prioriza PMVG quando disponível, pois representa economia de até 21.53%
+
+**Saída**: Classe terapêutica, produto, substância, laboratório, tipo, preço de referência, indicador CAP e ranking.
+
+### Consulta 3: Impacto Financeiro do CAP
+**Objetivo**: Quantificar a economia total proporcionada pelo programa CAP por laboratório.
+
+**Lógica de Negócio**:
+- Considera apenas produtos com CAP ativo e comercialização em 2024
+- Calcula diferença entre PF e PMVG (economia do governo)
+- Agrupa por laboratório para identificar maiores contribuidores
+- Ordena por maior economia total (maior impacto financeiro primeiro)
+
+**Saída**: Laboratório, total de produtos CAP, valores totais (PF/PMVG), economia total e desconto percentual.
+
+### Consulta 4: Detecção de Inconsistências
+**Objetivo**: Identificar problemas de qualidade de dados que requerem correção ou atenção.
+
+**Lógica de Negócio**:
+- **ERRO**: Produtos sem preço cadastrado (prioridade máxima)
+- **ALERTA CAP**: Produtos marcados como CAP mas sem PMVG cadastrado (inconsistência de dados)
+- **ALERTA PREÇO**: Preços acima de R$ 10.000 (possíveis erros ou medicamentos especiais)
+- **INFO**: Dados desatualizados (última atualização há mais de 1 ano)
+- Ordena por severidade: ERRO > ALERTA CAP > ALERTA PREÇO > INFO
+
+**Saída**: Produto, substância, laboratório, tipo, status de validação e preços.
+
+### Consulta 5: Ranking de Produtos por Tipo
+**Objetivo**: Comparar preços individuais com estatísticas do tipo de produto para identificar outliers.
+
+**Lógica de Negócio**:
+- Calcula estatísticas (média, mínimo, máximo) por tipo de produto
+- Compara cada produto com a média do seu tipo
+- Classifica em: Muito Alto (≥90% do máximo), Alto (≥150% da média), Baixo (≤110% do mínimo), Médio (resto)
+- Percentual acima da média: arredondado para inteiro quando >500% (evita decimais enganosos)
+- Ordena por tipo e preço descendente (mais caros primeiro)
+
+**Saída**: Produto, substância, laboratório, tipo, preço, estatísticas do tipo, percentual acima da média, classificação e ranking.
+
 ## Notas
 
 - CSV tem 72 linhas de cabeçalho (usar `--skip 72`)
