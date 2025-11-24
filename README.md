@@ -120,10 +120,66 @@ python3 etl/import_data.py \
 
 ## Uso
 
+### Conectar ao Banco de Dados
+
+```bash
+# Com senha via variável de ambiente
+export PGPASSWORD=admin
+psql -U postgres -d medicamentos_gov
+
+# Ou passar senha diretamente
+PGPASSWORD=admin psql -U postgres -d medicamentos_gov
+```
+
+### Navegação Básica no psql
+
+Uma vez conectado, use comandos úteis:
+
+```sql
+-- Listar todas as tabelas
+\dt
+
+-- Listar todas as views
+\dv
+
+-- Listar todas as procedures/functions
+\df
+
+-- Descrever estrutura de uma tabela
+\d produtos
+\d precos_fabrica
+
+-- Ver dados de uma tabela
+SELECT * FROM produtos LIMIT 10;
+SELECT COUNT(*) FROM produtos;
+
+-- Sair do psql
+\q
+```
+
 ### Consultas
 
 ```bash
-psql -U postgres -d medicamentos_gov -f sql/consultas.sql
+# Executar todas as consultas do arquivo
+PGPASSWORD=admin psql -U postgres -d medicamentos_gov -f sql/consultas.sql
+
+# Ou executar uma consulta específica diretamente
+PGPASSWORD=admin psql -U postgres -d medicamentos_gov -c "SELECT COUNT(*) FROM produtos;"
+```
+
+### Consultas Interativas
+
+```sql
+-- Ver produtos com preços
+SELECT p.nome_produto, pf.pf_sem_impostos, pmvg.pmvg_sem_impostos
+FROM produtos p
+LEFT JOIN precos_fabrica pf ON p.id_produto = pf.id_produto
+LEFT JOIN precos_pmvg pmvg ON p.id_produto = pmvg.id_produto
+LIMIT 10;
+
+-- Usar views
+SELECT * FROM v_precos_consolidados LIMIT 10;
+SELECT * FROM v_resumo_laboratorios LIMIT 10;
 ```
 
 ### Procedures
@@ -168,6 +224,57 @@ LIMIT 20;
    - Sem CAP: não pode exceder PF
 3. **Validações automáticas**: Triggers garantem integridade
 4. **Auditoria completa**: Todas as alterações são registradas
+
+## Exemplos Rápidos
+
+### Explorar Dados
+
+```bash
+# Conectar ao banco
+PGPASSWORD=admin psql -U postgres -d medicamentos_gov
+
+# Dentro do psql:
+-- Quantos produtos temos?
+SELECT COUNT(*) FROM produtos;
+
+-- Top 10 produtos mais caros
+SELECT p.nome_produto, pf.pf_sem_impostos 
+FROM produtos p
+JOIN precos_fabrica pf ON p.id_produto = pf.id_produto
+ORDER BY pf.pf_sem_impostos DESC
+LIMIT 10;
+
+-- Produtos por laboratório
+SELECT l.nome_laboratorio, COUNT(*) as total_produtos
+FROM produtos p
+JOIN laboratorios l ON p.id_laboratorio = l.id_laboratorio
+GROUP BY l.nome_laboratorio
+ORDER BY total_produtos DESC
+LIMIT 10;
+```
+
+### Usar Views
+
+```sql
+-- Preços consolidados
+SELECT * FROM v_precos_consolidados LIMIT 10;
+
+-- Produtos com CAP
+SELECT * FROM v_produtos_cap LIMIT 10;
+
+-- Resumo por laboratório
+SELECT * FROM v_resumo_laboratorios ORDER BY total_produtos DESC LIMIT 10;
+```
+
+### Executar Consultas Complexas
+
+```bash
+# Todas as 5 consultas do arquivo
+PGPASSWORD=admin psql -U postgres -d medicamentos_gov -f sql/consultas.sql
+
+# Salvar resultado em arquivo
+PGPASSWORD=admin psql -U postgres -d medicamentos_gov -f sql/consultas.sql > resultados.txt
+```
 
 ## Notas
 
