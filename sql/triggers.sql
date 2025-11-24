@@ -1,12 +1,30 @@
 -- Triggers com comandos condicionais para validações e auditoria
 -- PostgreSQL
 
+-- Drop triggers e functions primeiro
+DROP TRIGGER IF EXISTS trg_validar_preco_pf_insert ON precos_fabrica;
+DROP TRIGGER IF EXISTS trg_validar_preco_pf_update ON precos_fabrica;
+DROP TRIGGER IF EXISTS trg_auditoria_preco_pf_insert ON precos_fabrica;
+DROP TRIGGER IF EXISTS trg_auditoria_preco_pf_update ON precos_fabrica;
+DROP TRIGGER IF EXISTS trg_validar_pmvg_vs_pf_insert ON precos_pmvg;
+DROP TRIGGER IF EXISTS trg_validar_pmvg_vs_pf_update ON precos_pmvg;
+DROP TRIGGER IF EXISTS trg_auditoria_preco_pmvg_insert ON precos_pmvg;
+DROP TRIGGER IF EXISTS trg_auditoria_preco_pmvg_update ON precos_pmvg;
+DROP TRIGGER IF EXISTS trg_auditoria_produto_update ON produtos;
+DROP TRIGGER IF EXISTS trg_atualizar_data_produto ON produtos;
+
+DROP FUNCTION IF EXISTS trg_validar_preco_pf() CASCADE;
+DROP FUNCTION IF EXISTS trg_auditoria_preco_pf() CASCADE;
+DROP FUNCTION IF EXISTS trg_validar_pmvg_vs_pf() CASCADE;
+DROP FUNCTION IF EXISTS trg_auditoria_preco_pmvg() CASCADE;
+DROP FUNCTION IF EXISTS trg_auditoria_produto() CASCADE;
+DROP FUNCTION IF EXISTS trg_atualizar_data_produto() CASCADE;
+
 -- Trigger: Validação antes de inserir preço PF
-CREATE OR REPLACE FUNCTION trg_validar_preco_pf()
+CREATE FUNCTION trg_validar_preco_pf()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Validação: Preço deve ser positivo
-    IF NEW.pf_com_impostos IS NOT NULL AND NEW.pf_com_impostos <= 0 THEN
+    IF NEW.pf_sem_impostos IS NOT NULL AND NEW.pf_sem_impostos <= 0 THEN
         RAISE EXCEPTION 'Preço Fábrica deve ser maior que zero';
     END IF;
     RETURN NEW;
@@ -24,19 +42,19 @@ CREATE TRIGGER trg_validar_preco_pf_update
     EXECUTE FUNCTION trg_validar_preco_pf();
 
 -- Trigger: Auditoria ao inserir/atualizar preço PF
-CREATE OR REPLACE FUNCTION trg_auditoria_preco_pf()
+CREATE FUNCTION trg_auditoria_preco_pf()
 RETURNS TRIGGER AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         INSERT INTO historico_precos 
             (id_produto, tipo_preco, id_aliquota, valor_anterior, valor_novo, usuario_alteracao)
         VALUES 
-            (NEW.id_produto, 'PF', NEW.id_aliquota, NULL, NEW.pf_com_impostos, 'SISTEMA_TRIGGER');
-    ELSIF TG_OP = 'UPDATE' AND OLD.pf_com_impostos IS DISTINCT FROM NEW.pf_com_impostos THEN
+            (NEW.id_produto, 'PF', NEW.id_aliquota, NULL, NEW.pf_sem_impostos, 'SISTEMA_TRIGGER');
+    ELSIF TG_OP = 'UPDATE' AND OLD.pf_sem_impostos IS DISTINCT FROM NEW.pf_sem_impostos THEN
         INSERT INTO historico_precos 
             (id_produto, tipo_preco, id_aliquota, valor_anterior, valor_novo, usuario_alteracao)
         VALUES 
-            (NEW.id_produto, 'PF', NEW.id_aliquota, OLD.pf_com_impostos, NEW.pf_com_impostos, 'SISTEMA_TRIGGER');
+            (NEW.id_produto, 'PF', NEW.id_aliquota, OLD.pf_sem_impostos, NEW.pf_sem_impostos, 'SISTEMA_TRIGGER');
     END IF;
     RETURN NEW;
 END;
@@ -53,38 +71,32 @@ CREATE TRIGGER trg_auditoria_preco_pf_update
     EXECUTE FUNCTION trg_auditoria_preco_pf();
 
 -- Trigger: Validação e auditoria PMVG
-CREATE OR REPLACE FUNCTION trg_validar_pmvg_vs_pf()
+CREATE FUNCTION trg_validar_pmvg_vs_pf()
 RETURNS TRIGGER AS $$
 DECLARE
     v_pf_valor DECIMAL(10,2);
     v_cap tipo_sim_nao;
 BEGIN
-    -- Validação: Preço deve ser positivo
-    IF NEW.pmvg_com_impostos IS NOT NULL AND NEW.pmvg_com_impostos <= 0 THEN
+    IF NEW.pmvg_sem_impostos IS NOT NULL AND NEW.pmvg_sem_impostos <= 0 THEN
         RAISE EXCEPTION 'PMVG deve ser maior que zero';
     END IF;
     
-    -- Obtém valor do PF e se tem CAP
-    SELECT pf.pf_com_impostos, p.cap INTO v_pf_valor, v_cap
+    SELECT pf.pf_sem_impostos, p.cap INTO v_pf_valor, v_cap
     FROM precos_fabrica pf
     INNER JOIN produtos p ON pf.id_produto = p.id_produto
-    WHERE pf.id_produto = NEW.id_produto AND pf.id_aliquota = NEW.id_aliquota
+    WHERE pf.id_produto = NEW.id_produto AND ((pf.id_aliquota IS NULL AND NEW.id_aliquota IS NULL) OR pf.id_aliquota = NEW.id_aliquota)
     ORDER BY pf.data_vigencia DESC
     LIMIT 1;
     
-    -- Validação condicional baseada no CAP
     IF v_pf_valor IS NOT NULL THEN
         IF v_cap = 'Sim' THEN
-            -- Com CAP, permite desconto até 21.53% (com tolerância)
-            IF NEW.pmvg_com_impostos > (v_pf_valor * 0.895) THEN
-                -- Ajusta para valor máximo permitido
-                NEW.pmvg_com_impostos := v_pf_valor * 0.7847;
+            IF NEW.pmvg_sem_impostos > (v_pf_valor * 0.895) THEN
+                NEW.pmvg_sem_impostos := v_pf_valor * 0.7847;
             END IF;
         ELSE
-            -- Sem CAP, PMVG não deve exceder PF
-            IF NEW.pmvg_com_impostos > v_pf_valor THEN
+            IF NEW.pmvg_sem_impostos > v_pf_valor THEN
                 RAISE EXCEPTION 'PMVG (%) não pode ser maior que PF (%) para produtos sem CAP', 
-                    NEW.pmvg_com_impostos, v_pf_valor;
+                    NEW.pmvg_sem_impostos, v_pf_valor;
             END IF;
         END IF;
     END IF;
@@ -104,19 +116,19 @@ CREATE TRIGGER trg_validar_pmvg_vs_pf_update
     EXECUTE FUNCTION trg_validar_pmvg_vs_pf();
 
 -- Trigger: Auditoria PMVG
-CREATE OR REPLACE FUNCTION trg_auditoria_preco_pmvg()
+CREATE FUNCTION trg_auditoria_preco_pmvg()
 RETURNS TRIGGER AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         INSERT INTO historico_precos 
             (id_produto, tipo_preco, id_aliquota, valor_anterior, valor_novo, usuario_alteracao)
         VALUES 
-            (NEW.id_produto, 'PMVG', NEW.id_aliquota, NULL, NEW.pmvg_com_impostos, 'SISTEMA_TRIGGER');
-    ELSIF TG_OP = 'UPDATE' AND OLD.pmvg_com_impostos IS DISTINCT FROM NEW.pmvg_com_impostos THEN
+            (NEW.id_produto, 'PMVG', NEW.id_aliquota, NULL, NEW.pmvg_sem_impostos, 'SISTEMA_TRIGGER');
+    ELSIF TG_OP = 'UPDATE' AND OLD.pmvg_sem_impostos IS DISTINCT FROM NEW.pmvg_sem_impostos THEN
         INSERT INTO historico_precos 
             (id_produto, tipo_preco, id_aliquota, valor_anterior, valor_novo, usuario_alteracao)
         VALUES 
-            (NEW.id_produto, 'PMVG', NEW.id_aliquota, OLD.pmvg_com_impostos, NEW.pmvg_com_impostos, 'SISTEMA_TRIGGER');
+            (NEW.id_produto, 'PMVG', NEW.id_aliquota, OLD.pmvg_sem_impostos, NEW.pmvg_sem_impostos, 'SISTEMA_TRIGGER');
     END IF;
     RETURN NEW;
 END;
@@ -133,10 +145,9 @@ CREATE TRIGGER trg_auditoria_preco_pmvg_update
     EXECUTE FUNCTION trg_auditoria_preco_pmvg();
 
 -- Trigger: Auditoria automática de alterações em produtos
-CREATE OR REPLACE FUNCTION trg_auditoria_produto()
+CREATE FUNCTION trg_auditoria_produto()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Registra mudanças importantes nos campos do produto
     IF OLD.cap IS DISTINCT FROM NEW.cap THEN
         INSERT INTO historico_precos 
             (id_produto, tipo_preco, id_aliquota, valor_anterior, valor_novo, usuario_alteracao)
@@ -167,7 +178,7 @@ CREATE TRIGGER trg_auditoria_produto_update
     EXECUTE FUNCTION trg_auditoria_produto();
 
 -- Trigger: Atualização automática de data_atualizacao
-CREATE OR REPLACE FUNCTION trg_atualizar_data_produto()
+CREATE FUNCTION trg_atualizar_data_produto()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.data_atualizacao := CURRENT_TIMESTAMP;

@@ -1,134 +1,149 @@
 from datetime import date
+from psycopg2.extras import RealDictCursor
 
 
-def atualizar_preco_produto(connection, codigo_ggrem, id_aliquota, tipo_preco, novo_valor, usuario):
+def atualizar_preco_produto(
+    connection, codigo_ggrem, id_aliquota, tipo_preco, novo_valor, usuario
+):
     """
     Atualiza preço de um produto com validações condicionais
-    
+
     Args:
-        connection: Conexão SQLite
+        connection: Conexão PostgreSQL
         codigo_ggrem: Código GGREM do produto
-        id_aliquota: ID da alíquota ICMS
+        id_aliquota: ID da alíquota ICMS (pode ser None)
         tipo_preco: 'PF' ou 'PMVG'
         novo_valor: Novo valor do preço
         usuario: Nome do usuário que fez a alteração
-    
+
     Returns:
         str: Mensagem de resultado da operação
     """
-    cursor = connection.cursor()
-    
+    cursor = connection.cursor(cursor_factory=RealDictCursor)
+
     try:
-        # Verifica se o produto existe
-        cursor.execute("SELECT COUNT(*) as count FROM produtos WHERE codigo_ggrem = ?", (codigo_ggrem,))
-        resultado = cursor.fetchone()
-        if resultado['count'] == 0:
-            return 'ERRO: Produto não encontrado'
-        
         # Obtém informações do produto
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT p.id_produto, p.cap, rp.regime_preco 
             FROM produtos p
             INNER JOIN regimes_preco rp ON p.id_regime = rp.id_regime
-            WHERE p.codigo_ggrem = ?
-        """, (codigo_ggrem,))
-        
+            WHERE p.codigo_ggrem = %s
+        """,
+            (codigo_ggrem,),
+        )
+
         produto = cursor.fetchone()
         if not produto:
-            return 'ERRO: Produto não encontrado'
-        
-        id_produto = produto['id_produto']
-        cap = produto['cap']
-        
+            return "ERRO: Produto não encontrado"
+
+        id_produto = produto["id_produto"]
+        cap = produto["cap"]
+
         valor_anterior = None
+
+        tabela_preco = "precos_pmvg" if tipo_preco == "PMVG" else "precos_fabrica"
+        campo_preco = "pmvg_sem_impostos" if tipo_preco == "PMVG" else "pf_sem_impostos"
         
-        if tipo_preco == 'PMVG':
-            # Se é PMVG, verifica se o produto tem CAP
-            if cap == 'Não':
-                # Busca valor PF para comparação
-                cursor.execute("""
-                    SELECT pf_com_impostos 
-                    FROM precos_fabrica
-                    WHERE id_produto = ? AND id_aliquota = ?
-                    LIMIT 1
-                """, (id_produto, id_aliquota))
-                pf_result = cursor.fetchone()
-                
-                if pf_result and pf_result['pf_com_impostos']:
-                    valor_anterior_pf = pf_result['pf_com_impostos']
-                    # Valida se o PMVG não excede o PF
-                    if novo_valor > valor_anterior_pf:
-                        return f'ERRO: PMVG ({novo_valor}) não pode ser maior que PF ({valor_anterior_pf}) para produtos sem CAP'
-            
-            # Busca valor anterior de PMVG
-            cursor.execute("""
-                SELECT pmvg_com_impostos 
-                FROM precos_pmvg
-                WHERE id_produto = ? AND id_aliquota = ?
-                LIMIT 1
-            """, (id_produto, id_aliquota))
-            pmvg_result = cursor.fetchone()
-            if pmvg_result:
-                valor_anterior = pmvg_result['pmvg_com_impostos']
-            
-            # Atualiza ou insere PMVG
-            cursor.execute("""
-                INSERT OR REPLACE INTO precos_pmvg 
-                    (id_produto, id_aliquota, pmvg_com_impostos, data_vigencia)
-                VALUES (?, ?, ?, ?)
-            """, (id_produto, id_aliquota, novo_valor, date.today().isoformat()))
-            
-        elif tipo_preco == 'PF':
-            # Busca valor anterior
-            cursor.execute("""
-                SELECT pf_com_impostos 
+        if tipo_preco not in ("PF", "PMVG"):
+            return "ERRO: Tipo de preço inválido"
+
+        # Validações específicas
+        if tipo_preco == "PMVG" and cap == "Não":
+            # PMVG sem CAP não pode exceder PF
+            cursor.execute(
+                """
+                SELECT pf_sem_impostos 
                 FROM precos_fabrica
-                WHERE id_produto = ? AND id_aliquota = ?
+                WHERE id_produto = %s AND id_aliquota IS NOT DISTINCT FROM %s
                 LIMIT 1
-            """, (id_produto, id_aliquota))
+            """,
+                (id_produto, id_aliquota),
+            )
             pf_result = cursor.fetchone()
-            
-            if pf_result and pf_result['pf_com_impostos']:
-                valor_anterior = pf_result['pf_com_impostos']
-                # Valida variação percentual
+            if pf_result and pf_result["pf_sem_impostos"]:
+                if novo_valor > pf_result["pf_sem_impostos"]:
+                    return f"ERRO: PMVG ({novo_valor}) não pode ser maior que PF ({pf_result['pf_sem_impostos']}) para produtos sem CAP"
+
+        # Busca valor anterior
+        cursor.execute(
+            f"""
+            SELECT {campo_preco} 
+            FROM {tabela_preco}
+            WHERE id_produto = %s AND id_aliquota IS NOT DISTINCT FROM %s
+            LIMIT 1
+        """,
+            (id_produto, id_aliquota),
+        )
+        resultado_anterior = cursor.fetchone()
+        if resultado_anterior and resultado_anterior[campo_preco]:
+            valor_anterior = resultado_anterior[campo_preco]
+            # Valida variação percentual para PF
+            if tipo_preco == "PF":
                 variacao = abs((novo_valor - valor_anterior) / valor_anterior * 100)
                 if variacao > 50:
-                    print(f'AVISO: Variação de {variacao:.2f}% detectada. Prosseguindo com atualização.')
-            
-            # Atualiza ou insere PF
-            cursor.execute("""
-                INSERT OR REPLACE INTO precos_fabrica 
-                    (id_produto, id_aliquota, pf_com_impostos, data_vigencia)
-                VALUES (?, ?, ?, ?)
-            """, (id_produto, id_aliquota, novo_valor, date.today().isoformat()))
-        else:
-            return 'ERRO: Tipo de preço inválido'
-        
+                    print(f"AVISO: Variação de {variacao:.2f}% detectada. Prosseguindo com atualização.")
+
+        # Atualiza ou insere usando ON CONFLICT
+        cursor.execute(
+            f"""
+            INSERT INTO {tabela_preco} 
+                (id_produto, id_aliquota, {campo_preco}, data_vigencia)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (id_produto, id_aliquota, data_vigencia)
+            DO UPDATE SET {campo_preco} = EXCLUDED.{campo_preco}
+        """,
+            (id_produto, id_aliquota, novo_valor, date.today()),
+        )
+
         # Registra no histórico se houve mudança
         if valor_anterior is None or valor_anterior != novo_valor:
-            cursor.execute("""
+            cursor.execute(
+                """
                 INSERT INTO historico_precos 
                     (id_produto, tipo_preco, id_aliquota, valor_anterior, valor_novo, usuario_alteracao)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (id_produto, tipo_preco, id_aliquota, valor_anterior, novo_valor, usuario))
-        
+                VALUES (%s, %s::tipo_preco, %s, %s, %s, %s)
+            """,
+                (
+                    id_produto,
+                    tipo_preco,
+                    id_aliquota,
+                    valor_anterior,
+                    novo_valor,
+                    usuario,
+                ),
+            )
+
         connection.commit()
-        
-        valor_anterior_str = str(valor_anterior) if valor_anterior is not None else 'N/A'
-        return f'SUCESSO: Preço atualizado. Valor anterior: {valor_anterior_str}, Novo valor: {novo_valor}'
-        
+
+        valor_anterior_str = (
+            str(valor_anterior) if valor_anterior is not None else "N/A"
+        )
+        return f"SUCESSO: Preço atualizado. Valor anterior: {valor_anterior_str}, Novo valor: {novo_valor}"
+
     except Exception as e:
         connection.rollback()
-        return f'ERRO: {str(e)}'
+        return f"ERRO: {str(e)}"
 
 
-def buscar_produtos(connection, substancia=None, laboratorio=None, tipo_produto=None, 
-                    com_cap=None, aliquota=None, preco_maximo=None, ordenar_por='produto'):
+def buscar_produtos(
+    connection,
+    substancia=None,
+    laboratorio=None,
+    tipo_produto=None,
+    com_cap=None,
+    aliquota=None,
+    preco_maximo=None,
+    ordenar_por="produto",
+    canal="pf",
+    aliquota_percent=None,
+):
     """
-    Busca produtos por critérios com filtros condicionais
-    
+    Busca produtos por critérios com filtros condicionais (preços SEM impostos)
+    Considera que a compra ocorre sempre no mesmo estado (aliquota_percent opcional).
+
     Args:
-        connection: Conexão SQLite
+        connection: Conexão PostgreSQL
         substancia: Nome da substância (busca parcial)
         laboratorio: Nome do laboratório (busca parcial)
         tipo_produto: Tipo de produto exato
@@ -136,13 +151,35 @@ def buscar_produtos(connection, substancia=None, laboratorio=None, tipo_produto=
         aliquota: Valor da alíquota ICMS
         preco_maximo: Preço máximo de referência
         ordenar_por: 'preco', 'produto' ou 'laboratorio'
-    
+        canal: 'pf' (varejo) ou 'governo' (compra pública estadual/municipal)
+        aliquota_percent: Percentual ICMS efetivo do estado (float). Se None, não aplica.
+
     Returns:
         list: Lista de produtos encontrados
     """
-    cursor = connection.cursor()
-    
-    query = """
+    cursor = connection.cursor(cursor_factory=RealDictCursor)
+
+    # Expressão de preço de referência (sempre SEM impostos)
+    if canal and canal.lower() == "governo":
+        preco_ref_expr = """
+            CASE 
+                WHEN p.cap = 'Sim' AND pmvg.pmvg_sem_impostos IS NOT NULL THEN pmvg.pmvg_sem_impostos
+                ELSE pf.pf_sem_impostos
+            END
+        """
+    else:
+        # Varejo: usa PF sempre
+        preco_ref_expr = "pf.pf_sem_impostos"
+
+    # Preço final no estado (aplica aliquota_percent se fornecida, exceto ICMS zero)
+    # Usa o valor diretamente na expressão SQL já que é um parâmetro da função (não entrada do usuário)
+    if aliquota_percent is not None:
+        aliquota_value = float(aliquota_percent)
+        preco_final_expr = f"CASE WHEN p.icms_zero = 'Sim' THEN ({preco_ref_expr}) ELSE ({preco_ref_expr}) * (1 + {aliquota_value}/100.0) END"
+    else:
+        preco_final_expr = f"({preco_ref_expr})"
+
+    query = f"""
         SELECT DISTINCT
             p.codigo_ggrem,
             p.nome_produto,
@@ -152,69 +189,69 @@ def buscar_produtos(connection, substancia=None, laboratorio=None, tipo_produto=
             tp.tipo_produto,
             rp.regime_preco,
             p.cap,
+            p.icms_zero,
             p.comercializacao_2024,
             a.aliquota,
-            pf.pf_com_impostos AS preco_fabrica,
-            pmvg.pmvg_com_impostos AS preco_pmvg,
-            CASE 
-                WHEN p.cap = 'Sim' AND pmvg.pmvg_com_impostos IS NOT NULL THEN pmvg.pmvg_com_impostos
-                ELSE pf.pf_com_impostos
-            END AS preco_referencia
+            pf.pf_sem_impostos AS preco_fabrica,
+            pmvg.pmvg_sem_impostos AS preco_pmvg,
+            {preco_ref_expr} AS preco_referencia,
+            {preco_final_expr} AS preco_final
         FROM produtos p
         INNER JOIN substancias s ON p.id_substancia = s.id_substancia
         INNER JOIN laboratorios l ON p.id_laboratorio = l.id_laboratorio
         INNER JOIN tipos_produto tp ON p.id_tipo = tp.id_tipo
         INNER JOIN regimes_preco rp ON p.id_regime = rp.id_regime
-        LEFT JOIN precos_fabrica pf ON p.id_produto = pf.id_produto
-        LEFT JOIN precos_pmvg pmvg ON p.id_produto = pmvg.id_produto AND pf.id_aliquota = pmvg.id_aliquota
+        LEFT JOIN precos_fabrica pf ON p.id_produto = pf.id_produto AND pf.id_aliquota IS NULL
+        LEFT JOIN precos_pmvg pmvg ON p.id_produto = pmvg.id_produto AND pmvg.id_aliquota IS NULL
         LEFT JOIN aliquotas_icms a ON pf.id_aliquota = a.id_aliquota
         WHERE 1=1
     """
-    
+
     params = []
-    
+
     if substancia:
-        query += " AND s.nome_substancia LIKE ?"
-        params.append(f'%{substancia}%')
-    
+        query += " AND s.nome_substancia LIKE %s"
+        params.append(f"%{substancia}%")
+
     if laboratorio:
-        query += " AND l.nome_laboratorio LIKE ?"
-        params.append(f'%{laboratorio}%')
-    
+        query += " AND l.nome_laboratorio LIKE %s"
+        params.append(f"%{laboratorio}%")
+
     if tipo_produto:
-        query += " AND tp.tipo_produto = ?"
+        query += " AND tp.tipo_produto = %s"
         params.append(tipo_produto)
-    
+
     if com_cap is not None:
         if com_cap:
             query += " AND p.cap = 'Sim'"
         else:
             query += " AND p.cap = 'Não'"
-    
+
     if aliquota is not None:
-        query += " AND a.aliquota = ?"
+        query += " AND a.aliquota = %s"
         params.append(float(aliquota))
-    
+
     if preco_maximo is not None:
-        query += """ AND (
-            CASE 
-                WHEN p.cap = 'Sim' AND pmvg.pmvg_com_impostos IS NOT NULL THEN pmvg.pmvg_com_impostos
-                ELSE pf.pf_com_impostos
-            END
-        ) <= ?"""
+        # Filtra pelo preço final se aliquota_percent foi fornecida; caso contrário, pelo preço de referência
+        if aliquota_percent is not None:
+            query += " AND (preco_final) <= %s"
+        else:
+            query += " AND (preco_referencia) <= %s"
         params.append(float(preco_maximo))
-    
+
     # Ordenação
-    if ordenar_por == 'preco':
-        query += " ORDER BY preco_referencia"
-    elif ordenar_por == 'laboratorio':
+    if ordenar_por == "preco":
+        # Ordena por preço final quando disponível, senão por referência
+        if aliquota_percent is not None:
+            query += " ORDER BY preco_final"
+        else:
+            query += " ORDER BY preco_referencia"
+    elif ordenar_por == "laboratorio":
         query += " ORDER BY l.nome_laboratorio"
     else:
         query += " ORDER BY p.nome_produto"
-    
-    cursor.execute(query, params)
-    
-    # Retorna como lista de dicionários
-    columns = [description[0] for description in cursor.description]
-    return [dict(zip(columns, row)) for row in cursor.fetchall()]
 
+    cursor.execute(query, params)
+
+    # Retorna como lista de dicionários (RealDictCursor já retorna dicts)
+    return cursor.fetchall()

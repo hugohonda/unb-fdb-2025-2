@@ -1,167 +1,177 @@
-Os dados TA_PRECO_MEDICAMENTO_GOV.csv representam a lista de preços de Medicamentos , contemplando o preço Fábrica, ou preço fabricante (PF), que é o preço máximo praticado que pode ser praticado pelas empresas produtoras ou importadoras do produto e pelas empresas distribuidoras. O PF indica o preço máximo permitido para venda a farmácias e drogarias e o Preço Máximo de Venda ao Governo (PMVG) indica o preço teto de venda aos entes da administração pública quando for aplicável o desconto do Coeficiente de Adequação de Preços (CAP), quando não for o preço teto é o PF.
+# Sistema de Gestão de Preços de Medicamentos Governamentais
 
+Sistema completo para importação, armazenamento e consulta de preços de medicamentos (PF e PMVG) usando PostgreSQL.
 
 ## Estrutura do Projeto
 
 ```
-databanks/
 ├── README.md                    # Este arquivo
-├── INTRODUCAO.md                # Introdução explicando o problema
-├── TA_PRECO_MEDICAMENTO_GOV.csv # Dados originais
-├── requirements.txt              # Dependências Python
 ├── setup.sh                     # Script de setup automatizado
+├── requirements.txt              # Dependências Python
+├── TA_PRECO_MEDICAMENTO_GOV.csv # Dados originais
 ├── sql/
-│   ├── create_database.sql      # Script de criação do banco PostgreSQL
-│   ├── views.sql                # Views do banco de dados
-│   ├── procedures.sql           # Stored procedures com comandos condicionais
-│   ├── triggers.sql             # Triggers com comandos condicionais
-│   ├── consultas.sql            # 5 consultas SQL complexas
-│   └── algebra_relacional.md    # 3 consultas em Álgebra Relacional
+│   ├── create_db_only.sql       # Criação do banco
+│   ├── create_database.sql      # Schema completo (tabelas, tipos, índices)
+│   ├── views.sql                # Views consolidadas
+│   ├── procedures.sql           # Stored procedures
+│   ├── triggers.sql             # Triggers de validação e auditoria
+│   └── consultas.sql            # Consultas SQL complexas
 └── etl/
-    └── import_data.py           # Script ETL Python para importação
+    ├── import_data.py           # Script ETL de importação
+    └── functions.py             # Funções auxiliares Python
 ```
+
+## Setup Rápido
+
+```bash
+./setup.sh
+```
+
+O script solicita a senha do PostgreSQL e executa:
+1. Criação do banco de dados
+2. Criação de tabelas, tipos e índices
+3. Criação de views
+4. Criação de procedures e functions
+5. Criação de triggers
+6. Importação dos dados do CSV
 
 ## Requisitos
 
 - Python 3.7+
 - PostgreSQL 12+
-- psycopg2-binary (instalado via requirements.txt)
+- psycopg2-binary
 
-## Instalação
+## Instalação Manual
 
-1. Instalar dependências Python:
+### 1. Ambiente Python
+
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate  # macOS/Linux
 pip install -r requirements.txt
 ```
 
-2. Criar o banco de dados PostgreSQL:
-```bash
-# Como usuário postgres ou com permissões adequadas
-psql -U postgres -f sql/create_database.sql
-```
+### 2. Banco de Dados
 
-3. Criar views, procedures e triggers:
 ```bash
+# Criar banco
+psql -U postgres -f sql/create_db_only.sql
+
+# Criar schema
+psql -U postgres -d medicamentos_gov -f sql/create_database.sql
 psql -U postgres -d medicamentos_gov -f sql/views.sql
 psql -U postgres -d medicamentos_gov -f sql/procedures.sql
 psql -U postgres -d medicamentos_gov -f sql/triggers.sql
 ```
 
-## Execução do ETL
-
-Importar dados do CSV para o banco de dados PostgreSQL:
+### 3. Importar Dados
 
 ```bash
-python etl/import_data.py \
+python3 etl/import_data.py \
     --host localhost \
     --database medicamentos_gov \
     --user postgres \
-    --password sua_senha \
+    --password admin \
     --csv TA_PRECO_MEDICAMENTO_GOV.csv \
     --skip 72
 ```
 
-## Componentes Implementados
+## Componentes
 
-### ✅ Introdução
-- **INTRODUCAO.md**: Explicação completa do problema e objetivos da solução
+### Banco de Dados
 
-### ✅ Banco de Dados Relacional (PostgreSQL)
-- **sql/create_database.sql**: Schema normalizado com:
-  - Tipos ENUM para validação de dados
-  - Tabelas principais: produtos, laboratorios, substancias, classes_terapeuticas
-  - Tabelas de preços: precos_fabrica, precos_pmvg
-  - Tabela de histórico: historico_precos
-  - Integridade referencial com foreign keys
-  - Índices para performance
+**Tabelas principais:**
+- `produtos` - Medicamentos com informações completas
+- `laboratorios` - Fabricantes/importadores
+- `substancias` - Substâncias ativas
+- `classes_terapeuticas` - Classificação terapêutica
+- `precos_fabrica` - Preços Fábrica (PF)
+- `precos_pmvg` - Preços Máximo Venda ao Governo (PMVG)
+- `historico_precos` - Auditoria de alterações
 
-### ✅ ETL em Python
-- **etl/import_data.py**: Script completo de Extração, Transformação e Carga:
-  - Extração do arquivo CSV
-  - Normalização de dados
-  - Transformação de formatos (vírgula para ponto decimal)
-  - Inserção no banco relacional PostgreSQL
-  - Tratamento de erros e validações
+**Views:**
+- `v_precos_consolidados` - PF e PMVG consolidados
+- `v_produtos_cap` - Produtos com CAP e descontos
+- `v_resumo_laboratorios` - Estatísticas por laboratório
 
-### ✅ Views
-- **v_precos_consolidados**: Consolida PF e PMVG em uma única estrutura
-- **v_produtos_cap**: Produtos com CAP aplicável e cálculo de desconto
-- **v_resumo_laboratorios**: Resumo estatístico por laboratório
+### Stored Procedures
 
-### ✅ Stored Procedures (PostgreSQL)
-- **sp_atualizar_preco_produto**: Atualiza preços com validações condicionais:
-  - Valida se produto existe
-  - Para PMVG sem CAP: valida que não excede PF
-  - Para PF: alerta variações grandes (>50%)
-  - Registra histórico automaticamente
-- **sp_buscar_produtos**: Busca flexível com múltiplos filtros condicionais (retorna TABLE)
+**`sp_atualizar_preco_produto`** - Atualiza preços com validações:
+- Valida existência do produto
+- PMVG sem CAP: não pode exceder PF
+- PF: alerta variações >50%
+- Registra histórico automaticamente
 
-### ✅ Triggers com Condicionais
-- **trg_validar_preco_pf**: Valida preços PF antes de inserir/atualizar (deve ser > 0)
-- **trg_validar_pmvg_vs_pf**: Valida PMVG contra PF (aplica desconto CAP quando necessário)
-- **trg_auditoria_preco_pf/pmvg**: Registra alterações de preços no histórico
-- **trg_auditoria_produto**: Registra alterações importantes nos produtos
-- **trg_atualizar_data_produto**: Atualiza data automaticamente
+**`sp_buscar_produtos`** - Busca flexível com múltiplos filtros
 
-### ✅ 5 Consultas SQL Complexas
-1. Análise comparativa de preços entre laboratórios por substância
-2. Identificação de produtos com melhor custo-benefício por classe terapêutica (com ROW_NUMBER)
-3. Análise de impacto financeiro do CAP por laboratório
-4. Detecção de inconsistências e produtos que requerem atenção
-5. Ranking de produtos mais caros por tipo com análise comparativa (com CTEs)
+### Triggers
 
-### ✅ 3 Consultas em Álgebra Relacional
-1. Produtos com CAP aplicável e seus preços (σ, ⋈, π)
-2. Laboratórios com maior número de produtos por classe (⋈, γ, COUNT)
-3. Produtos com preço acima da média da classe (γ, AVG, σ, ⋈)
+**Validação:**
+- `trg_validar_preco_pf` - Preços PF devem ser positivos
+- `trg_validar_pmvg_vs_pf` - PMVG sem CAP não pode exceder PF
 
-## Executar Consultas
+**Auditoria:**
+- `trg_auditoria_preco_pf` - Registra alterações de PF
+- `trg_auditoria_preco_pmvg` - Registra alterações de PMVG
+- `trg_auditoria_produto` - Registra mudanças em CAP e regime
 
-As consultas podem ser executadas diretamente no PostgreSQL:
+**Manutenção:**
+- `trg_atualizar_data_produto` - Atualiza timestamp automaticamente
+
+## Uso
+
+### Consultas
 
 ```bash
 psql -U postgres -d medicamentos_gov -f sql/consultas.sql
 ```
 
-Ou interativamente:
-
-```bash
-psql -U postgres -d medicamentos_gov
-medicamentos_gov=# SELECT * FROM v_precos_consolidados LIMIT 10;
-```
-
-## Usar Stored Procedures
+### Procedures
 
 ```sql
--- Atualizar preço via procedure
+-- Atualizar preço
 CALL sp_atualizar_preco_produto(
-    '538912020009303',  -- codigo_ggrem
-    1,                  -- id_aliquota
-    'PF',               -- tipo_preco
-    150.00,             -- novo_valor
-    'usuario_teste',    -- usuario
-    ''                  -- resultado (OUT)
+    '508015901138411',  -- codigo_ggrem
+    NULL,                -- id_aliquota (NULL para sem impostos)
+    'PF',                -- tipo_preco
+    30.00,               -- novo_valor
+    'usuario',           -- usuario
+    ''                   -- resultado (OUT)
 );
 
--- Buscar produtos via function
+-- Buscar produtos
 SELECT * FROM sp_buscar_produtos(
     p_substancia := 'PARACETAMOL',
     p_ordenar_por := 'preco'
 );
 ```
 
-## Vantagens do PostgreSQL
+### Verificar Triggers
 
-- **Procedures Nativas**: Suporte completo a stored procedures com lógica condicional
-- **Tipos ENUM**: Validação de dados no nível do banco
-- **Performance**: Otimizado para grandes volumes de dados
-- **Recursos Avançados**: CTEs, window functions, triggers robustos
-- **Concorrência**: Excelente suporte a múltiplos usuários simultâneos
+```sql
+-- Listar triggers
+SELECT trigger_name, event_object_table 
+FROM information_schema.triggers 
+WHERE trigger_schema = 'public';
+
+-- Ver histórico
+SELECT * FROM historico_precos 
+ORDER BY data_alteracao DESC 
+LIMIT 20;
+```
+
+## Regras de Negócio
+
+1. **PF (Preço Fábrica)**: Preço máximo para venda a farmácias
+2. **PMVG (Preço Máximo Venda ao Governo)**: 
+   - Com CAP: pode ter desconto até 21.53%
+   - Sem CAP: não pode exceder PF
+3. **Validações automáticas**: Triggers garantem integridade
+4. **Auditoria completa**: Todas as alterações são registradas
 
 ## Notas
 
-- O arquivo CSV tem 72 linhas de cabeçalho antes dos dados
-- O script ETL processa em lotes de 100 linhas para melhor performance
-- Triggers garantem integridade dos dados conforme regras de negócio
-- Procedures podem ser chamadas diretamente via SQL ou integradas em aplicações
-- Certifique-se de ter PostgreSQL instalado e rodando antes de executar
+- CSV tem 72 linhas de cabeçalho (usar `--skip 72`)
+- Campos de texto usam `TEXT` para suportar valores longos
+- Scripts SQL são idempotentes (drop + create)
+- ETL processa com savepoints para isolamento de erros

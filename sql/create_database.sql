@@ -2,13 +2,25 @@
 -- Modelo normalizado seguindo os princípios do Modelo Relacional
 -- PostgreSQL
 
--- Criação do banco de dados
-CREATE DATABASE medicamentos_gov
-    WITH ENCODING 'UTF8'
-    LC_COLLATE='pt_BR.UTF-8'
-    LC_CTYPE='pt_BR.UTF-8';
+-- Drop tudo primeiro (em ordem reversa de dependências)
+DROP VIEW IF EXISTS v_precos_consolidados CASCADE;
+DROP VIEW IF EXISTS v_produtos_cap CASCADE;
+DROP VIEW IF EXISTS v_resumo_laboratorios CASCADE;
 
-\c medicamentos_gov;
+DROP TABLE IF EXISTS historico_precos CASCADE;
+DROP TABLE IF EXISTS precos_pmvg CASCADE;
+DROP TABLE IF EXISTS precos_fabrica CASCADE;
+DROP TABLE IF EXISTS produtos CASCADE;
+DROP TABLE IF EXISTS aliquotas_icms CASCADE;
+DROP TABLE IF EXISTS regimes_preco CASCADE;
+DROP TABLE IF EXISTS tipos_produto CASCADE;
+DROP TABLE IF EXISTS classes_terapeuticas CASCADE;
+DROP TABLE IF EXISTS substancias CASCADE;
+DROP TABLE IF EXISTS laboratorios CASCADE;
+
+DROP TYPE IF EXISTS tipo_preco CASCADE;
+DROP TYPE IF EXISTS tipo_sim_nao CASCADE;
+DROP TYPE IF EXISTS tipo_restricao CASCADE;
 
 -- Tipos ENUM
 CREATE TYPE tipo_restricao AS ENUM ('Sim', 'Não', 'Não especificado');
@@ -19,7 +31,7 @@ CREATE TYPE tipo_preco AS ENUM ('PF', 'PMVG');
 CREATE TABLE laboratorios (
     id_laboratorio SERIAL PRIMARY KEY,
     cnpj VARCHAR(18) NOT NULL UNIQUE,
-    nome_laboratorio VARCHAR(255) NOT NULL
+    nome_laboratorio TEXT NOT NULL
 );
 
 CREATE INDEX idx_cnpj ON laboratorios(cnpj);
@@ -28,7 +40,7 @@ CREATE INDEX idx_nome ON laboratorios(nome_laboratorio);
 -- Tabela de Substâncias Ativas
 CREATE TABLE substancias (
     id_substancia SERIAL PRIMARY KEY,
-    nome_substancia VARCHAR(255) NOT NULL UNIQUE
+    nome_substancia TEXT NOT NULL UNIQUE
 );
 
 CREATE INDEX idx_nome_substancia ON substancias(nome_substancia);
@@ -37,7 +49,7 @@ CREATE INDEX idx_nome_substancia ON substancias(nome_substancia);
 CREATE TABLE classes_terapeuticas (
     id_classe SERIAL PRIMARY KEY,
     codigo_classe VARCHAR(20) NOT NULL UNIQUE,
-    descricao_classe VARCHAR(255) NOT NULL
+    descricao_classe TEXT NOT NULL
 );
 
 CREATE INDEX idx_descricao_classe ON classes_terapeuticas(descricao_classe);
@@ -75,7 +87,7 @@ CREATE TABLE produtos (
     ean_1 VARCHAR(20),
     ean_2 VARCHAR(20),
     ean_3 VARCHAR(20),
-    nome_produto VARCHAR(255) NOT NULL,
+    nome_produto TEXT NOT NULL,
     apresentacao TEXT NOT NULL,
     id_substancia INTEGER NOT NULL,
     id_laboratorio INTEGER NOT NULL,
@@ -86,11 +98,11 @@ CREATE TABLE produtos (
     cap tipo_sim_nao DEFAULT 'Não',
     confaz_87 tipo_sim_nao DEFAULT 'Não',
     icms_zero tipo_sim_nao DEFAULT 'Não',
-    analise_recursal VARCHAR(50),
-    lista_concessao_credito VARCHAR(255),
+    analise_recursal TEXT,
+    lista_concessao_credito TEXT,
     comercializacao_2024 tipo_sim_nao DEFAULT 'Não',
-    tarja VARCHAR(100),
-    destino_comercial VARCHAR(255),
+    tarja TEXT,
+    destino_comercial TEXT,
     data_atualizacao TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (id_substancia) REFERENCES substancias(id_substancia) ON DELETE RESTRICT,
     FOREIGN KEY (id_laboratorio) REFERENCES laboratorios(id_laboratorio) ON DELETE RESTRICT,

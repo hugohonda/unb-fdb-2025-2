@@ -16,45 +16,74 @@ if ! command -v psql &> /dev/null; then
     exit 1
 fi
 
+# Verifica se Python está disponível
+if ! command -v python3 &> /dev/null; then
+    echo "✗ Python 3 não encontrado. Instale Python 3 primeiro."
+    exit 1
+fi
+
+# Verifica se psycopg2 está instalado
+if ! python3 -c "import psycopg2" 2>/dev/null; then
+    echo "⚠ psycopg2 não encontrado."
+    echo ""
+    echo "Recomendado: Use um ambiente virtual Python"
+    echo "  python3 -m venv .venv"
+    echo "  source .venv/bin/activate"
+    echo "  pip install -r requirements.txt"
+    echo ""
+    read -p "Deseja instalar psycopg2 agora? (s/N): " -n 1 -r
+    echo ""
+    if [[ $REPLY =~ ^[Ss]$ ]]; then
+        pip3 install -r requirements.txt
+    else
+        echo "✗ Instale psycopg2 antes de continuar: pip install -r requirements.txt"
+        exit 1
+    fi
+fi
+
 # Solicita senha do PostgreSQL
 read -sp "Senha do PostgreSQL para usuário $DB_USER: " PGPASSWORD
 export PGPASSWORD
 echo ""
 
 # Cria o banco de dados
-echo "1. Criando banco de dados e tabelas..."
-psql -U "$DB_USER" -f sql/create_database.sql
+echo "1. Criando banco de dados..."
+psql -U "$DB_USER" -d postgres -f sql/create_db_only.sql 2>&1 | grep -v "already exists" || true
 echo "✓ Banco de dados criado: $DB_NAME"
+
+# Cria tabelas e estruturas
+echo ""
+echo "2. Criando tabelas e estruturas..."
+psql -U "$DB_USER" -d "$DB_NAME" -f sql/create_database.sql 2>&1 | grep -vE "(does not exist, skipping|^NOTICE:)"
+echo "✓ Tabelas criadas"
 
 # Cria as views
 echo ""
-echo "2. Criando views..."
-psql -U "$DB_USER" -d "$DB_NAME" -f sql/views.sql
+echo "3. Criando views..."
+psql -U "$DB_USER" -d "$DB_NAME" -f sql/views.sql 2>&1 | grep -vE "(does not exist, skipping|^NOTICE:)"
 echo "✓ Views criadas"
 
 # Cria as procedures
 echo ""
-echo "3. Criando procedures..."
-psql -U "$DB_USER" -d "$DB_NAME" -f sql/procedures.sql
+echo "4. Criando procedures..."
+psql -U "$DB_USER" -d "$DB_NAME" -f sql/procedures.sql 2>&1 | grep -vE "(does not exist, skipping|^NOTICE:)"
 echo "✓ Procedures criadas"
 
 # Cria os triggers
 echo ""
-echo "4. Criando triggers..."
-psql -U "$DB_USER" -d "$DB_NAME" -f sql/triggers.sql
+echo "5. Criando triggers..."
+psql -U "$DB_USER" -d "$DB_NAME" -f sql/triggers.sql 2>&1 | grep -vE "(does not exist, skipping|^NOTICE:)"
 echo "✓ Triggers criados"
 
 # Importa dados
 echo ""
-echo "5. Importando dados do CSV..."
+echo "6. Importando dados do CSV..."
 if [ -f "$CSV_FILE" ]; then
-    read -sp "Senha do PostgreSQL novamente para ETL: " ETL_PASSWORD
-    echo ""
     python3 etl/import_data.py \
         --host localhost \
         --database "$DB_NAME" \
         --user "$DB_USER" \
-        --password "$ETL_PASSWORD" \
+        --password "$PGPASSWORD" \
         --csv "$CSV_FILE" \
         --skip 72
     echo "✓ Dados importados"
