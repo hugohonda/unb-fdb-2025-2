@@ -1,5 +1,19 @@
--- Triggers com comandos condicionais para validações e auditoria
+-- Triggers para validações automáticas e auditoria de alterações
 -- PostgreSQL
+--
+-- Triggers de Validação:
+--   - trg_validar_preco_pf: Garante preços PF positivos
+--   - trg_validar_pmvg_vs_pf: Valida PMVG não exceder PF (produtos sem CAP)
+--
+-- Triggers de Auditoria:
+--   - trg_auditoria_preco_pf: Registra alterações de PF em historico_precos
+--   - trg_auditoria_preco_pmvg: Registra alterações de PMVG em historico_precos
+--   - trg_auditoria_produto: Registra mudanças em CAP e regime_preco
+--
+-- Triggers de Manutenção:
+--   - trg_atualizar_data_produto: Atualiza timestamp automaticamente em alterações
+--
+-- Nota: Script é idempotente (DROP IF EXISTS + CREATE)
 
 -- Drop triggers e functions primeiro
 DROP TRIGGER IF EXISTS trg_validar_preco_pf_insert ON precos_fabrica;

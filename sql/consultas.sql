@@ -1,5 +1,19 @@
 -- 5 Consultas SQL Complexas - Perspectiva ANVISA/Farmácia
 -- PostgreSQL
+--
+-- Consultas para análise regulatória e gestão de preços de medicamentos:
+--   1. Substâncias com maior variação de preço entre laboratórios
+--   2. Produto mais barato por classe terapêutica (sem duplicatas)
+--   3. Impacto financeiro do CAP por laboratório
+--   4. Inconsistências agrupadas por tipo de problema
+--   5. Produtos mais caros por tipo (sem duplicatas)
+--
+-- Características:
+--   - Todas utilizam apenas preços mais recentes (DISTINCT ON + data_vigencia DESC)
+--   - Filtram tipos inválidos (tipo_produto != '-') e produtos não comercializados
+--   - Agrupam por produto/substância para evitar duplicatas de apresentações
+--
+-- Uso: Executar com psql -f sql/consultas.sql ou copiar consultas individuais
 
 -- Consulta 1: Substâncias com maior variação de preço entre laboratórios
 -- Identifica possíveis abusos de preço e necessidade de regulação

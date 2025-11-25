@@ -1,3 +1,12 @@
+"""
+Funções auxiliares para interação com banco de dados PostgreSQL
+
+Módulo contém funções para:
+- atualizar_preco_produto: Atualiza preços com validações condicionais
+- buscar_produtos: Busca flexível com múltiplos filtros e cálculo de preços finais
+
+Todas as funções trabalham com preços SEM impostos como valores base.
+"""
 from datetime import date
 from psycopg2.extras import RealDictCursor
 
@@ -6,18 +15,30 @@ def atualizar_preco_produto(
     connection, codigo_ggrem, id_aliquota, tipo_preco, novo_valor, usuario
 ):
     """
-    Atualiza preço de um produto com validações condicionais
+    Atualiza preço de um produto com validações condicionais.
+
+    Validações implementadas:
+    - Verifica existência do produto pelo código GGREM
+    - PMVG sem CAP: não pode exceder PF (regra de negócio)
+    - PF: alerta variações >50% (não bloqueia, apenas avisa)
+    - Registra histórico automaticamente se houver mudança
 
     Args:
-        connection: Conexão PostgreSQL
-        codigo_ggrem: Código GGREM do produto
-        id_aliquota: ID da alíquota ICMS (pode ser None)
-        tipo_preco: 'PF' ou 'PMVG'
-        novo_valor: Novo valor do preço
-        usuario: Nome do usuário que fez a alteração
+        connection: Conexão PostgreSQL (deve estar ativa)
+        codigo_ggrem: Código GGREM único do produto (VARCHAR(20))
+        id_aliquota: ID da alíquota ICMS (INTEGER, pode ser None para sem impostos)
+        tipo_preco: Tipo de preço a atualizar ('PF' ou 'PMVG')
+        novo_valor: Novo valor do preço (DECIMAL, deve ser positivo)
+        usuario: Nome do usuário que fez a alteração (para auditoria)
 
     Returns:
         str: Mensagem de resultado da operação
+            - "SUCESSO: ..." se atualização bem-sucedida
+            - "AVISO: ..." se variação >50% detectada (mas prossegue)
+            - "ERRO: ..." se validação falhar ou produto não encontrado
+
+    Raises:
+        psycopg2.Error: Se houver erro de conexão ou SQL
     """
     cursor = connection.cursor(cursor_factory=RealDictCursor)
 
@@ -139,23 +160,49 @@ def buscar_produtos(
     aliquota_percent=None,
 ):
     """
-    Busca produtos por critérios com filtros condicionais (preços SEM impostos)
-    Considera que a compra ocorre sempre no mesmo estado (aliquota_percent opcional).
+    Busca produtos por critérios com filtros condicionais.
+
+    Características:
+    - Trabalha com preços SEM impostos como valores base
+    - Calcula preço final aplicando ICMS se aliquota_percent fornecido
+    - Respeita regra CAP: usa PMVG se disponível para canal governo
+    - Suporta múltiplos filtros combinados (AND lógico)
+    - Busca parcial em substância e laboratório (LIKE %valor%)
+
+    Preço de Referência:
+    - Canal 'governo': PMVG se CAP='Sim' e PMVG disponível, senão PF
+    - Canal 'pf' (varejo): Sempre PF
+
+    Preço Final:
+    - Se aliquota_percent fornecido: preco_referencia * (1 + aliquota_percent/100)
+    - Exceto produtos com icms_zero='Sim' (mantém preço sem ICMS)
+    - Se aliquota_percent None: retorna apenas preco_referencia
 
     Args:
-        connection: Conexão PostgreSQL
-        substancia: Nome da substância (busca parcial)
-        laboratorio: Nome do laboratório (busca parcial)
-        tipo_produto: Tipo de produto exato
-        com_cap: Boolean - True para produtos com CAP, False para sem CAP
-        aliquota: Valor da alíquota ICMS
-        preco_maximo: Preço máximo de referência
-        ordenar_por: 'preco', 'produto' ou 'laboratorio'
-        canal: 'pf' (varejo) ou 'governo' (compra pública estadual/municipal)
-        aliquota_percent: Percentual ICMS efetivo do estado (float). Se None, não aplica.
+        connection: Conexão PostgreSQL (deve estar ativa)
+        substancia: Nome da substância (str, busca parcial com LIKE)
+        laboratorio: Nome do laboratório (str, busca parcial com LIKE)
+        tipo_produto: Tipo de produto exato (str, ex: 'Genérico', 'Similar')
+        com_cap: Boolean - True para produtos com CAP, False para sem CAP, None para ambos
+        aliquota: Valor da alíquota ICMS (float, para filtrar por alíquota específica)
+        preco_maximo: Preço máximo de referência (float, filtra pelo preço final se aliquota_percent fornecido)
+        ordenar_por: Campo de ordenação ('preco', 'produto' ou 'laboratorio')
+        canal: Canal de venda ('pf' para varejo, 'governo' para compra pública)
+        aliquota_percent: Percentual ICMS efetivo do estado (float, 0-100). Se None, não aplica ICMS.
 
     Returns:
-        list: Lista de produtos encontrados
+        list: Lista de dicionários com produtos encontrados. Cada dicionário contém:
+            - codigo_ggrem, nome_produto, apresentacao
+            - nome_substancia, nome_laboratorio, tipo_produto, regime_preco
+            - cap, icms_zero, comercializacao_2024
+            - aliquota, preco_fabrica, preco_pmvg
+            - preco_referencia (PF ou PMVG conforme canal)
+            - preco_final (com ICMS se aliquota_percent fornecido)
+
+    Note:
+        - Retorna apenas produtos com preços cadastrados (LEFT JOIN com precos_fabrica)
+        - Usa DISTINCT para evitar duplicatas de múltiplos preços por produto
+        - Considera apenas preços com id_aliquota IS NULL (sem impostos)
     """
     cursor = connection.cursor(cursor_factory=RealDictCursor)
 

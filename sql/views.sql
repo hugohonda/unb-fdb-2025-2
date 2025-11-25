@@ -1,5 +1,12 @@
--- Views para simplificar consultas frequentes
+-- Views consolidadas para simplificar consultas frequentes
 -- PostgreSQL
+--
+-- Views disponíveis:
+--   - v_precos_consolidados: Preços PF e PMVG unificados por produto
+--   - v_produtos_cap: Produtos com CAP e cálculo de descontos
+--   - v_resumo_laboratorios: Estatísticas agregadas por laboratório
+--
+-- Nota: Script é idempotente (DROP IF EXISTS + CREATE)
 
 -- Drop views primeiro
 DROP VIEW IF EXISTS v_precos_consolidados CASCADE;

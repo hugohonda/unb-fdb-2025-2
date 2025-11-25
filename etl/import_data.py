@@ -2,6 +2,17 @@
 """
 Script ETL para importação dos dados de preços de medicamentos
 do arquivo CSV para o banco de dados relacional PostgreSQL
+
+Características:
+- Processamento por savepoints: cada linha processada em savepoint isolado
+- Mapeamento de IDs: sistema de obter_ou_criar_id para garantir referências corretas
+- Normalização de Enums: conversão automática de valores CSV para tipos ENUM
+- Validação de dados: verificação de campos obrigatórios antes da inserção
+- Logging detalhado: registro de sucessos e falhas por linha processada
+
+Uso:
+    python3 etl/import_data.py --host localhost --database medicamentos_gov \\
+        --user postgres --password admin --csv TA_PRECO_MEDICAMENTO_GOV.csv --skip 72
 """
 
 import os

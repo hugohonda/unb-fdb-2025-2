@@ -1,6 +1,15 @@
 -- Script de criação do banco de dados relacional para preços de medicamentos governamentais
--- Modelo normalizado seguindo os princípios do Modelo Relacional
+-- Modelo normalizado seguindo os princípios do Modelo Relacional (3NF)
 -- PostgreSQL
+--
+-- Estrutura:
+--   - Tabelas principais: produtos, laboratorios, substancias, classes_terapeuticas
+--   - Tabelas de preços: precos_fabrica, precos_pmvg (suportam histórico por data_vigencia)
+--   - Tabela de auditoria: historico_precos
+--   - Tipos ENUM: tipo_sim_nao, tipo_restricao, tipo_preco
+--   - Índices: Otimização de consultas frequentes
+--
+-- Nota: Script é idempotente (DROP IF EXISTS + CREATE), pode ser executado múltiplas vezes
 
 -- Drop tudo primeiro (em ordem reversa de dependências)
 DROP VIEW IF EXISTS v_precos_consolidados CASCADE;

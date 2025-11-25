@@ -37,9 +37,10 @@ O script solicita a senha do PostgreSQL e executa:
 
 ## Requisitos
 
-- Python 3.7+
-- PostgreSQL 12+
-- psycopg2-binary
+- **Python**: 3.7+ (recomendado 3.10+)
+- **PostgreSQL**: 12+ (recomendado 15+)
+- **Dependências Python**: `psycopg2-binary` (ver `requirements.txt`)
+- **Sistema Operacional**: macOS, Linux ou Windows (com WSL)
 
 ## Instalação Manual
 
@@ -218,12 +219,34 @@ LIMIT 20;
 
 ## Regras de Negócio
 
-1. **PF (Preço Fábrica)**: Preço máximo para venda a farmácias
+### Preços
+
+1. **PF (Preço Fábrica)**: 
+   - Preço máximo para venda a farmácias (varejo)
+   - Deve ser positivo (validado por trigger)
+   - Variações >50% geram alerta (não bloqueiam)
+
 2. **PMVG (Preço Máximo Venda ao Governo)**: 
-   - Com CAP: pode ter desconto até 21.53%
-   - Sem CAP: não pode exceder PF
-3. **Validações automáticas**: Triggers garantem integridade
-4. **Auditoria completa**: Todas as alterações são registradas
+   - **Com CAP**: Pode ter desconto até ~21.53% em relação ao PF
+   - **Sem CAP**: Não pode exceder PF (validado por trigger)
+   - Usado para compras governamentais (estadual/municipal)
+
+3. **Preço de Referência**:
+   - **Canal Governo**: PMVG se disponível (CAP), senão PF
+   - **Canal Varejo**: Sempre PF
+   - **Com ICMS**: Aplicado sobre preço de referência (exceto produtos com `icms_zero = 'Sim'`)
+
+### Validações Automáticas
+
+- **Triggers**: Garantem integridade de dados em tempo real
+- **Stored Procedures**: Implementam regras de negócio complexas
+- **Constraints**: Foreign keys e UNIQUE constraints garantem consistência
+
+### Auditoria
+
+- **Histórico Completo**: Todas as alterações de preços são registradas em `historico_precos`
+- **Rastreabilidade**: Cada alteração registra usuário, data/hora, valor anterior e novo valor
+- **Triggers de Auditoria**: Capturam alterações em PF, PMVG e atributos de produtos (CAP, regime)
 
 ## Exemplos Rápidos
 
@@ -356,9 +379,78 @@ PGPASSWORD=admin psql -U postgres -d medicamentos_gov -f sql/consultas.sql > res
 
 **Uso**: Identificar produtos com preços anormalmente altos para investigação regulatória (ex: produtos classificados como "Alto (outlier)").
 
-## Notas
+## Arquitetura e Design
 
-- CSV tem 72 linhas de cabeçalho (usar `--skip 72`)
-- Campos de texto usam `TEXT` para suportar valores longos
-- Scripts SQL são idempotentes (drop + create)
-- ETL processa com savepoints para isolamento de erros
+### Modelo de Dados
+
+O sistema utiliza um modelo relacional normalizado com as seguintes características:
+
+- **Normalização**: Tabelas normalizadas até 3NF, evitando redundâncias
+- **Integridade Referencial**: Foreign keys garantem consistência entre tabelas
+- **Histórico de Preços**: Tabelas `precos_fabrica` e `precos_pmvg` suportam múltiplas vigências por produto
+- **Auditoria**: Tabela `historico_precos` registra todas as alterações de preços
+- **Tipos ENUM**: Uso de tipos customizados (`tipo_sim_nao`, `tipo_restricao`, `tipo_preco`) para garantir valores válidos
+
+### ETL (Extract, Transform, Load)
+
+O processo ETL (`etl/import_data.py`) implementa:
+
+- **Processamento por Savepoints**: Cada linha processada em savepoint isolado, permitindo continuidade mesmo com erros pontuais
+- **Mapeamento de IDs**: Sistema de `obter_ou_criar_id` para garantir referências corretas entre tabelas
+- **Normalização de Enums**: Conversão automática de valores CSV para tipos ENUM do banco
+- **Validação de Dados**: Verificação de campos obrigatórios antes da inserção
+- **Logging Detalhado**: Registro de sucessos e falhas por linha processada
+
+### Validações e Regras de Negócio
+
+**Triggers Automáticos:**
+- Validação de preços positivos
+- Validação PMVG vs PF para produtos sem CAP
+- Auditoria automática de alterações
+- Atualização automática de timestamps
+
+**Stored Procedures:**
+- `sp_atualizar_preco_produto`: Valida variações >50% e regras CAP
+- `sp_buscar_produtos`: Busca flexível com múltiplos filtros e cálculo de preços finais
+
+**Views Consolidadas:**
+- `v_precos_consolidados`: Preços PF e PMVG unificados
+- `v_produtos_cap`: Produtos com CAP e cálculo de descontos
+- `v_resumo_laboratorios`: Estatísticas agregadas por laboratório
+
+## Notas Técnicas
+
+- **CSV**: Arquivo possui 72 linhas de cabeçalho (usar `--skip 72` no ETL)
+- **Campos TEXT**: Uso de `TEXT` em vez de `VARCHAR` para suportar valores longos (ex: `nome_laboratorio`, `descricao_classe`)
+- **Idempotência**: Scripts SQL são idempotentes (DROP IF EXISTS + CREATE), permitindo execução múltipla sem erros
+- **Isolamento de Erros**: ETL processa com savepoints para isolamento de erros por linha
+- **Preços SEM Impostos**: Sistema trabalha com `pf_sem_impostos` e `pmvg_sem_impostos` como valores base
+- **Preços Mais Recentes**: Consultas complexas utilizam `DISTINCT ON` com `ORDER BY data_vigencia DESC` para obter apenas preços mais recentes
+- **Senha Padrão**: `admin` (definida no `setup.sh`)
+
+## Troubleshooting
+
+### Erro: "role postgres does not exist"
+```bash
+createuser -s postgres
+```
+
+### Erro: "database medicamentos_gov does not exist"
+Execute `sql/create_db_only.sql` primeiro antes de `create_database.sql`.
+
+### Erro: "ModuleNotFoundError: No module named 'psycopg2'"
+```bash
+pip install psycopg2-binary
+```
+
+### Erro durante ETL: "InFailedSqlTransaction"
+O ETL usa savepoints, mas se a transação principal falhar, execute:
+```sql
+ROLLBACK;
+```
+E reinicie o processo de importação.
+
+### Consultas retornam 0 linhas
+- Verifique se os dados foram importados: `SELECT COUNT(*) FROM produtos;`
+- Verifique filtros de `comercializacao_2024 = 'Sim'` e `tipo_produto != '-'`
+- Verifique se há preços cadastrados: `SELECT COUNT(*) FROM precos_fabrica;`

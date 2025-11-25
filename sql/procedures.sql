@@ -1,5 +1,11 @@
--- Procedures com comandos condicionais
+-- Stored Procedures e Functions para gestão de preços de medicamentos
 -- PostgreSQL
+--
+-- Procedures implementam regras de negócio e validações:
+--   - sp_atualizar_preco_produto: Atualiza preços com validações (variação >50%, regras CAP)
+--   - sp_buscar_produtos: Busca flexível com múltiplos filtros e cálculo de preços finais
+--
+-- Nota: Script é idempotente (DROP IF EXISTS + CREATE)
 
 -- Drop procedures/functions primeiro
 DROP PROCEDURE IF EXISTS sp_atualizar_preco_produto CASCADE;
